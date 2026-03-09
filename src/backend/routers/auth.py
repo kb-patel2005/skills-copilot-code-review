@@ -3,6 +3,7 @@ Authentication endpoints for the High School Management System API
 """
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from typing import Dict, Any
 
 from ..database import teachers_collection, verify_password
@@ -12,27 +13,41 @@ router = APIRouter(
     tags=["auth"]
 )
 
+# ---------------------------
+# Data Models
+# ---------------------------
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
-@router.post("/login")
-def login(username: str, password: str) -> Dict[str, Any]:
+class TeacherResponse(BaseModel):
+    username: str
+    display_name: str
+    role: str
+
+
+# ---------------------------
+# Routes
+# ---------------------------
+@router.post("/login", response_model=TeacherResponse)
+def login(request: LoginRequest) -> Dict[str, Any]:
     """Login a teacher account"""
     # Find the teacher in the database
-    teacher = teachers_collection.find_one({"_id": username})
+    teacher = teachers_collection.find_one({"_id": request.username})
 
     # Verify password using Argon2 verifier from database.py
-    if not teacher or not verify_password(teacher.get("password", ""), password):
-        raise HTTPException(
-            status_code=401, detail="Invalid username or password")
+    if not teacher or not verify_password(request.password, teacher.get("password", "")):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
 
     # Return teacher information (excluding password)
     return {
-        "username": teacher["username"],
-        "display_name": teacher["display_name"],
-        "role": teacher["role"]
+        "username": teacher.get("username", request.username),
+        "display_name": teacher.get("display_name", ""),
+        "role": teacher.get("role", "teacher")
     }
 
 
-@router.get("/check-session")
+@router.get("/check-session", response_model=TeacherResponse)
 def check_session(username: str) -> Dict[str, Any]:
     """Check if a session is valid by username"""
     teacher = teachers_collection.find_one({"_id": username})
@@ -41,7 +56,7 @@ def check_session(username: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="Teacher not found")
 
     return {
-        "username": teacher["username"],
-        "display_name": teacher["display_name"],
-        "role": teacher["role"]
+        "username": teacher.get("username", username),
+        "display_name": teacher.get("display_name", ""),
+        "role": teacher.get("role", "teacher")
     }
