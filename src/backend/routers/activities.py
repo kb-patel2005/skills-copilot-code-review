@@ -2,7 +2,7 @@
 Endpoints for the High School Management System API
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, EmailStr
 
@@ -25,6 +25,27 @@ class ActivityResponse(BaseModel):
 
 class SignupResponse(BaseModel):
     message: str
+
+class SignupRequest(BaseModel):
+    email: EmailStr
+    teacher_username: str
+
+class UnregisterRequest(BaseModel):
+    email: EmailStr
+    teacher_username: str
+
+
+# ---------------------------
+# Helper
+# ---------------------------
+def authenticate_teacher(username: str):
+    """Validate teacher credentials"""
+    if not username:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    teacher = teachers_collection.find_one({"_id": username})
+    if not teacher:
+        raise HTTPException(status_code=401, detail="Invalid teacher credentials")
+    return teacher
 
 
 # ---------------------------
@@ -71,29 +92,19 @@ def get_available_days() -> List[str]:
         {"$sort": {"_id": 1}}
     ]
 
-    days = [day_doc["_id"] for day_doc in activities_collection.aggregate(pipeline)]
-    return days
+    return [day_doc["_id"] for day_doc in activities_collection.aggregate(pipeline)]
 
 
 @router.post("/{activity_name}/signup", response_model=SignupResponse)
-def signup_for_activity(
-    activity_name: str,
-    email: EmailStr,
-    teacher_username: Optional[str] = Query(None)
-):
+def signup_for_activity(activity_name: str, request: SignupRequest):
     """Sign up a student for an activity - requires teacher authentication"""
-    if not teacher_username:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    teacher = teachers_collection.find_one({"_id": teacher_username})
-    if not teacher:
-        raise HTTPException(status_code=401, detail="Invalid teacher credentials")
+    authenticate_teacher(request.teacher_username)
 
     activity = activities_collection.find_one({"_id": activity_name})
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    if email in activity.get("participants", []):
+    if request.email in activity.get("participants", []):
         raise HTTPException(status_code=400, detail="Already signed up")
 
     if len(activity.get("participants", [])) >= activity.get("max_participants", 0):
@@ -101,42 +112,33 @@ def signup_for_activity(
 
     result = activities_collection.update_one(
         {"_id": activity_name},
-        {"$push": {"participants": email}}
+        {"$push": {"participants": request.email}}
     )
 
     if result.modified_count == 0:
         raise HTTPException(status_code=500, detail="Failed to update activity")
 
-    return SignupResponse(message=f"Signed up {email} for {activity_name}")
+    return SignupResponse(message=f"Signed up {request.email} for {activity_name}")
 
 
 @router.post("/{activity_name}/unregister", response_model=SignupResponse)
-def unregister_from_activity(
-    activity_name: str,
-    email: EmailStr,
-    teacher_username: Optional[str] = Query(None)
-):
+def unregister_from_activity(activity_name: str, request: UnregisterRequest):
     """Remove a student from an activity - requires teacher authentication"""
-    if not teacher_username:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    teacher = teachers_collection.find_one({"_id": teacher_username})
-    if not teacher:
-        raise HTTPException(status_code=401, detail="Invalid teacher credentials")
+    authenticate_teacher(request.teacher_username)
 
     activity = activities_collection.find_one({"_id": activity_name})
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    if email not in activity.get("participants", []):
+    if request.email not in activity.get("participants", []):
         raise HTTPException(status_code=400, detail="Not registered for this activity")
 
     result = activities_collection.update_one(
         {"_id": activity_name},
-        {"$pull": {"participants": email}}
+        {"$pull": {"participants": request.email}}
     )
 
     if result.modified_count == 0:
         raise HTTPException(status_code=500, detail="Failed to update activity")
 
-    return SignupResponse(message=f"Unregistered {email} from {activity_name}")
+    return SignupResponse(message=f"Unregistered {request.email} from {activity_name}")
